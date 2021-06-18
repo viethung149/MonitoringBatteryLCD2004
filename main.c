@@ -5,6 +5,16 @@
 #include "spi.h"
 #include "string.h"
 #include "stdio.h"
+/*
+*  PC15 MOSI
+*  PC14 MISO
+*  PC13 CLK
+*  PC12 NSS
+*  PC14 handshark
+*  PA15 button
+*  PB7  SDA
+*  PB6  SCL
+*/
 #define NUMBER_BATTERY 8
 #define NUMBER_FLOAT_DATA 32
 #define TIME_WAIT_READ 5000
@@ -83,9 +93,7 @@ int main(void)
   config_button();  	                      // config button PA15
   I2C_init_LCD();              							// config I2c Protocol for LCD
 	lcd_init();                  						// config LCD in mode 4 line
-	//EXTI_config();
 	SPI_config_slave();                       // config SPI2 in slave mode for reading data from stm32f407
-	//SPI_config_DMA();
 	init_timer_interrupt_MS(TIME_WAIT_READ);  // config TIMER4 for waiting to read stm32f407
 	init_timer_read_button(TIME_READ_BUTTON); // config TIMER2 for reading the status of button
 	lcd_send_string("viet hung");
@@ -168,18 +176,7 @@ int main(void)
 				if(number_cell !=0 || number_package != 0)
 				lcd_infor_cell(voltage,temperature,number_cell,number_package);
 			}
-//			else{
-//				SPI_Cmd(SPI2,DISABLE);
-//				DMA_Cmd(DMA1_Channel4,DISABLE);
-//				SPI_I2S_DMACmd(SPI2,SPI_I2S_DMAReq_Rx,DISABLE);
-//	      DMA_ITConfig(DMA1_Channel4,DMA_IT_TC,DISABLE);
-//			  TIM_Cmd(TIM_channel_MS,DISABLE);  
-//				NVIC_DisableIRQ(DMA1_Channel4_IRQn);
-//				SPI_config_slave();
-//	      SPI_config_DMA();
-//				DMA_SetCurrDataCounter(DMA1_Channel4,0);
-//				TIM_Cmd(TIM_channel_MS,ENABLE);  
-//			}
+	
 			for(int i =0;i<NUMBER_FLOAT_DATA;i++)
 					{
 						float_buffer[i]=0;
@@ -192,35 +189,6 @@ int main(void)
 		}
 	}
 }
-/*
-* Handler when button press to render the lcd
-*/
-void EXTI15_10_IRQHandler(void)
-{
-		if(EXTI_GetITStatus(EXTI_Line15)!=RESET)
-	  { 
-			if(Flag_read_cell == Bit_SET){
-				number_cell++;
-				if(number_cell == 9) {
-					number_cell =0;
-					Flag_read_cell = Bit_RESET;
-					Flag_read_package = Bit_SET;
-				}
-			}
-			if(Flag_read_package == Bit_SET){
-				number_package ++;
-				if(number_package == 3) {
-					number_package =0;
-					Flag_read_package = Bit_RESET;
-					Flag_read_cell = Bit_SET;
-					number_cell++;
-				}		
-			}
-			update = Bit_SET;
-			EXTI_ClearITPendingBit(EXTI_Line15);
-	  }
-}
-
 // read correct
 void DMA1_Channel4_IRQHandler(void){
 	if(DMA_GetITStatus(DMA1_IT_TC4)!= RESET){
@@ -251,7 +219,13 @@ void SPI2_IRQHandler(void)
 			}
 			else{
 				number_byte_index++;
+				lcd_Control_Write(CLEAR_LCD);
+				Delay_msST(10);
+				GoToXY(1,1);
+				Delay_msST(10);
+				lcd_send_string("Wrong data");
 			}
+
 		}
 	SPI_I2S_ClearFlag(SPI2, SPI_I2S_IT_RXNE);
 }
