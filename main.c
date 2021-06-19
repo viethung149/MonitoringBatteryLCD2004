@@ -5,27 +5,27 @@
 #include "spi.h"
 #include "string.h"
 #include "stdio.h"
+#include "uart.h"
 /*
-*  PC15 MOSI
-*  PC14 MISO
-*  PC13 CLK
-*  PC12 NSS
+*  PA3 receive data
 *  PC14 handshark
 *  PA15 button
 *  PB7  SDA
 *  PB6  SCL
 */
+
 #define NUMBER_BATTERY 8
 #define NUMBER_FLOAT_DATA 32
 #define TIME_WAIT_READ 5000
 #define TIME_READ_BUTTON 5
 #define MAX_READ 40 // 5ms*40 = 200ms (read in 200ms) 
-#define SENSITIVE_BUTTON 10 // if in 200ms have 10 times button is 1 mean this button was press
+#define SENSITIVE_BUTTON 3 // if in 200ms have 10 times button is 1 mean this button was press
 DMA_InitTypeDef dma_config;
 uint32_t Time_ST=0;	 // bien delay bang system tick timer	
 int number_cell = 0;
 int number_package =0;
 unsigned char spi_rx [BUFFER_RX];
+unsigned char crc_check = 0x00;
 float voltage[NUMBER_BATTERY];
 float temperature[NUMBER_BATTERY];
 float float_buffer[NUMBER_FLOAT_DATA];
@@ -49,6 +49,8 @@ union floatToByte
 	float variableFloat;
 	char varialbeByte[4];
 };
+int FAIL = 0;
+int SUCCESSFUL =0;
 /*
 * Config pin PC13 to test, and pin PC14 for handshark
 */
@@ -89,14 +91,16 @@ uint32_t time_n=nTime*12000;
 int main(void)
 	{
 	SysTick_Config(SystemCoreClock/1000);
+	NVIC_PriorityGroupConfig(NVIC_PriorityGroup_4);
 	config_pin_handsharkTest();               // config pin handshark pin PC14 and pin test PC13
   config_button();  	                      // config button PA15
   I2C_init_LCD();              							// config I2c Protocol for LCD
 	lcd_init();                  						// config LCD in mode 4 line
-	SPI_config_slave();                       // config SPI2 in slave mode for reading data from stm32f407
+	//SPI_config_slave();                       // config SPI2 in slave mode for reading data from stm32f407
 	init_timer_interrupt_MS(TIME_WAIT_READ);  // config TIMER4 for waiting to read stm32f407
 	init_timer_read_button(TIME_READ_BUTTON); // config TIMER2 for reading the status of button
 	lcd_send_string("viet hung");
+	UART_Configuration();
 	while(1){
 		// if button is pressed render again LCD  
 		if(update == Bit_SET)              
@@ -107,9 +111,9 @@ int main(void)
 		// if reading correct data frame from stm32 get the value and show it in the LCD
 		if(proccess_buffer == Bit_SET){
 			
-			unsigned char crc_check = 0x00;
-			for(int i =0 ;i< 133;i++){crc_check += spi_rx[i];}
-			if(spi_rx[0] == 'I' && spi_rx[134]==0x0D && crc_check == spi_rx[133]){
+			unsigned char crc = 0x00;
+			for(int i =0 ;i< 133;i++){crc += spi_rx[i];}
+			if(spi_rx[0] == 'I' && crc == spi_rx[133]){
 				// from 1 to 128 is data
 				int index_float_buffer =0;
 				for(int i =1 ;i< 129;)
@@ -176,7 +180,10 @@ int main(void)
 				if(number_cell !=0 || number_package != 0)
 				lcd_infor_cell(voltage,temperature,number_cell,number_package);
 			}
-	
+	    else{
+				//				
+				
+			}
 			for(int i =0;i<NUMBER_FLOAT_DATA;i++)
 					{
 						float_buffer[i]=0;
@@ -189,48 +196,42 @@ int main(void)
 		}
 	}
 }
-// read correct
-void DMA1_Channel4_IRQHandler(void){
-	if(DMA_GetITStatus(DMA1_IT_TC4)!= RESET){
-		GPIO_WriteBit(GPIOC,GPIO_Pin_13,(BitAction)(1^GPIO_ReadInputDataBit(GPIOC,GPIO_Pin_13)));	
-		proccess_buffer = Bit_SET;
-		counter_dma_work++;
-		DMA_ClearITPendingBit(DMA1_IT_TC4);
+
+/*
+* Handler USART2 receive the data from stm32f407
+* subpriority:  0
+* pre: 0
+*/
+void USART2_IRQHandler(void){
+	if (USART_GetFlagStatus(USART2, USART_IT_RXNE) != RESET){
+		counter_it++;if(counter_it>1350) counter_it=0;
+			spi_rx[number_byte_index]=USART_ReceiveData(USART2);
+		  if(spi_rx [0] != 'I'){
+				number_byte_index = 0;
+				goto end;
+			}
+		  if(number_byte_index <133){
+				crc_check += spi_rx[number_byte_index];
+				number_byte_index++;
+			}
+			else if(number_byte_index == 133 && crc_check == spi_rx[133]){
+				  SUCCESSFUL++;
+				  crc_check = 0x00;
+					number_byte_index =0;
+					proccess_buffer = Bit_SET;
+			}
+			else{
+					number_byte_index = 0;
+				  FAIL++;
+			}
+		  end:
+			USART_ClearFlag(USART2, USART_IT_RXNE);
 	}
 }
 /*
-* Handler SPI2 receive the data from stm32f407
-*/
-void SPI2_IRQHandler(void)
-{
-	if (SPI_I2S_GetITStatus(SPI2, SPI_I2S_IT_RXNE) != RESET)
-		{
-			counter_it++;if(counter_it>1350) counter_it=0;
-			spi_rx[number_byte_index]=SPI_I2S_ReceiveData(SPI2);
-			if(spi_rx[0]=='I' && spi_rx[number_byte_index]== 0x0D && number_byte_index == 134){
-				number_byte_index =0;
-				proccess_buffer = Bit_SET;
-			}
-			else if(spi_rx[0] != 'I'){
-				number_byte_index =0;
-			}
-			else if(number_byte_index == 134){
-				number_byte_index =0;
-			}
-			else{
-				number_byte_index++;
-				lcd_Control_Write(CLEAR_LCD);
-				Delay_msST(10);
-				GoToXY(1,1);
-				Delay_msST(10);
-				lcd_send_string("Wrong data");
-			}
-
-		}
-	SPI_I2S_ClearFlag(SPI2, SPI_I2S_IT_RXNE);
-}
-/*
 * Handler to send handshark signal to smt32f407 to syn data
+* subpriority:  1
+* pre: 0
 */
 void TIM4_IRQHandler(void)
 {
@@ -244,6 +245,8 @@ void TIM4_IRQHandler(void)
 }
 /*
 * Handler TIMMER 2 for reading button
+* subpriority:  1
+* pre: 0
 */
 void TIM2_IRQHandler(void)
 {
